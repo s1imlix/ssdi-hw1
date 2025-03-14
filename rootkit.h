@@ -25,7 +25,7 @@ struct filter_info {
   char comm[TASK_FILTER_LEN]; // process name
 
   // function pointer
-  unsigned long old_handler_addr;
+  unsigned long orig_handler_addr;
   struct list_head list;
 };
 

@@ -1,5 +1,6 @@
 #include "rootkit.h"
 #include <fcntl.h>
+#include <linux/sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
@@ -65,13 +66,13 @@ void test_masq() {
   close(fd);
 }
 
-def test_add_filter() {
+void test_add_filter() {
   int fd = open(device, O_RDWR);
   struct filter_info info;
 
   info.syscall_nr = __NR_read;
-  strncpy(info.comm, current->comm, TASK_COMM_LEN);
-  info.comm[TASK_COMM_LEN - 1] = '\0';
+  strncpy(info.comm, current->comm, TASK_FILTER_LEN);
+  info.comm[TASK_FILTER_LEN - 1] = '\0';
 
   printf("adding filter for read syscall... before\n");
   system("strace -e read ls");
