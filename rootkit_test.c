@@ -92,7 +92,7 @@ void test_add_filter() { // testing filter of read()
   }
 
   printf("call should add filter for read syscall...\n");
-  if (read(file_fd, NULL, 0) < 0) {
+  if (read(file_fd, NULL, 0) == ERRFILTER) {
     printf("read() failed with filter\n");
   } else {
     perror("read() succeeded with filter");
