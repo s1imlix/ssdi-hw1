@@ -45,7 +45,7 @@ static asmlinkage long my_sys_read(const struct pt_regs *regs) {
   list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
       pr_info("Filtering read syscall for process %s\n", pos->comm);
-      return ERRFILTER;
+      return -ERRFILTER;
     }
   }
 

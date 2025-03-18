@@ -70,6 +70,7 @@ void test_masq() {
 }
 
 void test_add_filter() { // testing filter of read()
+  char buf[2];
   int fd = open(device, O_RDWR);
   int file_fd = open(test_file, O_RDONLY);
   struct filter_info info;
@@ -79,8 +80,9 @@ void test_add_filter() { // testing filter of read()
   info.comm[TASK_FILTER_LEN - 1] = '\0';
 
   printf("adding filter for read syscall... before\n");
-  if (read(file_fd, NULL, 0) == 0) {
-    printf("read() succeeded\n");
+  if (read(file_fd, buf, 2) == 2) {
+    buf[1] = '\0';
+    printf("read() succeeded with content %s\n", buf);
   } else {
     perror("read() failed without filter");
   }
@@ -92,7 +94,10 @@ void test_add_filter() { // testing filter of read()
   }
 
   printf("call should add filter for read syscall...\n");
-  if (read(file_fd, NULL, 0) == ERRFILTER) {
+  lseek(file_fd, 0, SEEK_SET);
+  int n = read(file_fd, buf, 2);
+  printf("read() returned %d\n", n);
+  if (n == ERRFILTER) {
     printf("read() failed with filter\n");
   } else {
     perror("read() succeeded with filter");

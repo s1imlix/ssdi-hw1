@@ -6,7 +6,7 @@
 #define MASQ_LEN 0x20
 #define TASK_FILTER_LEN 0x20
 
-#define ERRFILTER -87
+#define ERRFILTER 1000
 
 #define PAGE_KERNEL __pgprot(PROT_NORMAL)
 
