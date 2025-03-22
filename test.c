@@ -9,10 +9,10 @@
 #include <unistd.h>
 
 const char *device = "/dev/rootkit";
-const char *proc_name = "rootkit_test";
-const char *test_file = "/mnt/ssdi-hw1/test.txt";
-const char *child_proc_name = "rootkit_test_ch";
-const char *child_exec = "/mnt/ssdi-hw1/rootkit_test_child";
+const char *proc_name = "test";
+const char *test_file = "/home/test.txt";
+const char *child_proc_name = "child";
+const char *child_exec = "/mnt/child";
 const char *test_dir_name = "/home/hello";
 
 void test_hide() {
@@ -73,12 +73,18 @@ void test_masq() {
 }
 
 void test_filter() { // testing filter of read() and mkdir()
+
+  printf("* creating test file at %s\n", test_file);
+  int fd = open(test_file, O_CREAT | O_WRONLY, 0777);
+  write(fd, "hello", 5);
+  close(fd);
+
   char buf[2];
-  int fd = open(device, O_RDWR);
+  fd = open(device, O_RDWR);
   int file_fd = open(test_file, O_RDONLY);
   if (file_fd < 0) {
-	perror("open fail");
-	}
+    perror("open fail");
+  }
   struct filter_info info;
 
   info.syscall_nr = SYS_read;
@@ -106,9 +112,6 @@ void test_filter() { // testing filter of read() and mkdir()
     return;
   }
 
-
-
-
   info.syscall_nr = SYS_mkdirat;
   ret = ioctl(fd, IOCTL_ADD_FILTER, &info);
   if (ret < 0) {
@@ -120,10 +123,10 @@ void test_filter() { // testing filter of read() and mkdir()
   lseek(file_fd, 0, SEEK_SET);
   int n = read(file_fd, buf, 2);
   printf("read() returned %d\n", n);
-  if (n < 0) {
-    printf("read() failed with status code\n");
+  if (n >= 0) {
+    perror("read() succeeded\n");
   } else {
-    perror("read() succeeded with content");
+    printf("read() failed with filter\n");
   }
 
   printf("* mkdir syscall should be filtered...\n");
@@ -148,11 +151,10 @@ void test_filter() { // testing filter of read() and mkdir()
     perror("mkdir() failed without filter");
   }
 
-
   printf("* filtering mkdir for child process\n");
   strncpy(info.comm, child_proc_name, TASK_FILTER_LEN);
   ret = ioctl(fd, IOCTL_ADD_FILTER, &info);
-  if (ret < 0){
+  if (ret < 0) {
     perror("ioctl");
   }
 

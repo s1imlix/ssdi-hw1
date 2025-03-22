@@ -3,8 +3,8 @@
 
 #include <linux/string.h>
 
-#define MASQ_LEN 0x40
-#define TASK_FILTER_LEN 0x40
+#define MASQ_LEN 0x10
+#define TASK_FILTER_LEN 0x10
 
 typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 
