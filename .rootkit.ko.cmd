@@ -1,1 +1,0 @@
-cmd_/home/kyle/shared/ssdi-hw1/rootkit.ko := aarch64-linux-gnu-ld -r -EL  -maarch64elf -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T scripts/module.lds -o /home/kyle/shared/ssdi-hw1/rootkit.ko /home/kyle/shared/ssdi-hw1/rootkit.o /home/kyle/shared/ssdi-hw1/rootkit.mod.o;  true
