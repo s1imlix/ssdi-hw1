@@ -97,10 +97,10 @@ void test_add_filter() { // testing filter of read()
   lseek(file_fd, 0, SEEK_SET);
   int n = read(file_fd, buf, 2);
   printf("read() returned %d\n", n);
-  if (n == ERRFILTER) {
-    printf("read() failed with filter\n");
+  if (n < 0) {
+    perror("read() failed with status code\n");
   } else {
-    perror("read() succeeded with filter");
+    printf("read() succeeded with content %s\n", buf);
   }
 
   close(fd);
