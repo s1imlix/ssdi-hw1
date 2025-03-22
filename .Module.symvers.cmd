@@ -1,0 +1,1 @@
+cmd_/home/kyle/shared/ssdi-hw1/Module.symvers :=  sed 's/ko$$/o/'  /home/kyle/shared/ssdi-hw1/modules.order | scripts/mod/modpost      -o /home/kyle/shared/ssdi-hw1/Module.symvers -e -i Module.symvers -T - 

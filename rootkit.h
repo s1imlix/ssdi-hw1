@@ -1,10 +1,14 @@
 #ifndef __ROOTKIT_HW2_H
 #define __ROOTKIT_HW2_H
 
+#ifndef __NR_mkdir
+#define __NR_mkdir __NR_mkdirat
+#endif
+
 #include <linux/string.h>
 
-#define MASQ_LEN 0x20
-#define TASK_FILTER_LEN 0x20
+#define MASQ_LEN 0x10
+#define TASK_FILTER_LEN 0x10
 
 #define PAGE_KERNEL __pgprot(PROT_NORMAL)
 

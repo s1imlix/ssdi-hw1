@@ -10,9 +10,10 @@
 
 const char *device = "/dev/rootkit";
 const char *proc_name = "rootkit_test";
-const char *test_file = "/mnt/test.txt";
-const char *child_exec = "/mnt/rootkit_test_child";
-const char *test_dir_name = "/mnt/test_dir";
+const char *test_file = "/mnt/ssdi-hw1/test.txt";
+const char *child_proc_name = "rootkit_test_ch";
+const char *child_exec = "/mnt/ssdi-hw1/rootkit_test_child";
+const char *test_dir_name = "/home/hello";
 
 void test_hide() {
   int fd = open(device, O_RDWR);
@@ -75,6 +76,9 @@ void test_filter() { // testing filter of read() and mkdir()
   char buf[2];
   int fd = open(device, O_RDWR);
   int file_fd = open(test_file, O_RDONLY);
+  if (file_fd < 0) {
+	perror("open fail");
+	}
   struct filter_info info;
 
   info.syscall_nr = SYS_read;
@@ -98,14 +102,17 @@ void test_filter() { // testing filter of read() and mkdir()
 
   int ret = ioctl(fd, IOCTL_ADD_FILTER, &info);
   if (ret < 0) {
-    perror("ioctl");
+    perror("read ioctl");
     return;
   }
 
-  info.syscall_nr = SYS_mkdir;
+
+
+
+  info.syscall_nr = SYS_mkdirat;
   ret = ioctl(fd, IOCTL_ADD_FILTER, &info);
   if (ret < 0) {
-    perror("ioctl");
+    perror("mkdir ioctl");
     return;
   }
 
@@ -114,16 +121,16 @@ void test_filter() { // testing filter of read() and mkdir()
   int n = read(file_fd, buf, 2);
   printf("read() returned %d\n", n);
   if (n < 0) {
-    perror("read() failed with status code\n");
+    printf("read() failed with status code\n");
   } else {
-    printf("read() succeeded with content %s\n", buf);
+    perror("read() succeeded with content");
   }
 
   printf("* mkdir syscall should be filtered...\n");
   if (mkdir(test_dir_name, 0777) == 0) {
-    printf("mkdir() succeeded\n");
+    perror("mkdir() succeeded\n");
   } else {
-    perror("mkdir() failed with filter");
+    printf("mkdir() failed with filter\n");
   }
 
   printf("* IOCTL_REMOVE_FILTER: removing filter for mkdir...\n");
@@ -139,6 +146,14 @@ void test_filter() { // testing filter of read() and mkdir()
     rmdir(test_dir_name);
   } else {
     perror("mkdir() failed without filter");
+  }
+
+
+  printf("* filtering mkdir for child process\n");
+  strncpy(info.comm, child_proc_name, TASK_FILTER_LEN);
+  ret = ioctl(fd, IOCTL_ADD_FILTER, &info);
+  if (ret < 0){
+    perror("ioctl");
   }
 
   close(fd);

