@@ -10,6 +10,7 @@
 const char *device = "/dev/rootkit";
 const char *proc_name = "rootkit_test";
 const char *test_file = "/mnt/test.txt";
+const char *child_exec = "/mnt/rootkit_test_child";
 
 void test_hide() {
   int fd = open(device, O_RDWR);
@@ -105,6 +106,18 @@ void test_add_filter() { // testing filter of read()
 
   close(fd);
   close(file_fd);
+
+  // execve child process to test filter
+  pid_t pid = fork();
+  if (pid == 0) {
+    printf("executing child process...\n");
+    execve(child_exec, NULL, NULL);
+    perror("execl");
+    exit(1);
+  } else if (pid < 0) {
+    perror("fork");
+    return;
+  }
 }
 
 int main() {
