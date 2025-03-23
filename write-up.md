@@ -14,7 +14,7 @@ template/
 
 We will separately explain different part of the source code, including:
 - The module: `rootkit.c, rootkit.h`
-- Testbench: `rootkit_test.c, rootkit_test_child.c, shared_rootkit.h, test.h`
+- Testbench: `test.c, child.c, shared_rootkit.h`
 
 ## Module
 
@@ -76,7 +76,7 @@ In this function, we do the following work:
 This function handles the main operations of our module.
 #### `IOCTL_MOD_HIDE`
 
-1. When a user-space program invokes `IOCTL_MOD_HIDE` the module removes itself from the kernel module list (output of `lsmod`) by accessing the kernel's linked list structure. We use `module_list` to keep a reference to the original linked list so as to add it back later.
+1. When a user-space program call `IOCTL_MOD_HIDE`, the module removes itself from the kernel module list (output of `lsmod`) by accessing the kernel's linked list structure. We use `module_list` to keep a reference to the original linked list so as to add it back later.
 
 2. Invoking with `IOCTL_MOD_HIDE` again restores the module’s visibility by reinserting it into the list.
     ```c 
@@ -97,7 +97,7 @@ This function handles the main operations of our module.
 
 #### `IOCTL_MOD_MASQ`
 
-1. It allocates kernel-space memory for a masq_proc_req structure at `req`, which stores masquerading requests received from user space. The user-space request (`usr_req`) is then copied into the kernel-space structure. (The list of entries is copied one by one.)
+1. It allocates kernel-space memory for a `masq_proc_req` structure at `req`, which stores masquerading requests received from user space. The user-space request (`usr_req`) is then copied into the kernel-space structure. (The list of entries is copied one by one.)
     ```c
     case IOCTL_MOD_MASQ:
         struct masq_proc_req *req = (struct masq_proc_req *)kmalloc(
@@ -218,7 +218,9 @@ case IOCTL_REMOVE_FILTER: {
 ### `test_hide()`
 
 This function tests the ability to hide and unhide the kernel module:
-1. First. open the `/dev/roookit` device, 
+
+1. First. open the `/dev/roookit` device, call ioctl with `IOCTL_MOD_HIDE` to hide the module,then run the `lsmod` command to verify the module is hidden,
+
     ```c
     void test_hide() {
       int fd = open(device, O_RDWR);
@@ -226,9 +228,6 @@ This function tests the ability to hide and unhide the kernel module:
         perror("open");
         return;
       }
-    ```
-2. call ioctl with `IOCTL_MOD_HIDE` to hide the module,then run the `lsmod` command to verify the module is hidden,
-    ```c
       int ret = ioctl(fd, IOCTL_MOD_HIDE, 0);
       if (ret < 0) {
         perror("ioctl");
@@ -240,7 +239,9 @@ This function tests the ability to hide and unhide the kernel module:
       printf("first call should hide module...\n");
       system("lsmod");
     ```
-3. call the `OCTL_MOD_HIDE` again to unhide the module and verifies it with `lsmod`.
+
+2. call the `OCTL_MOD_HIDE` again to unhide the module and verifies it with `lsmod`.
+
     ```c
       ret = ioctl(fd, IOCTL_MOD_HIDE, 0);
       if (ret < 0) {
@@ -259,8 +260,10 @@ This function tests the ability to hide and unhide the kernel module:
 ### `test_masq()`
 
 This function tests the ability to masquerade process names:
+Debug messages in this part are omitted here for simplicity of the report.
 
-1. First. open the `/dev/roookit` device,Create the `masq_proc_req` structure with two process name mappings
+1. First, open the `/dev/roookit` device, create the `masq_proc_req` structure with two process name mappings, calls ioctl with the `IOCTL_MOD_MASQ` command to apply the masquerading.
+
     ```c
     void test_masq() {
       int fd = open(device, O_RDWR);
@@ -274,66 +277,70 @@ This function tests the ability to masquerade process names:
 
       printf("* masquerading login and agetty processes... before\n");
       system("ps ao pid,comm");
-    ```
-2. Calls ioctl with the `IOCTL_MOD_MASQ` command to apply the masquerading.
-    ```c
+
       int ret = ioctl(fd, IOCTL_MOD_MASQ, &req);
       if (ret < 0) {
         perror("ioctl");
         return;
       }
     ```
-3. Uses the `ps` command to verify that the process names have been changed.
+
+2. Uses the `ps` command to verify that the process names have been changed,and frees allocated memory and closes the device after testing.
+
     ```c
       printf("* call should masquerade processes...\n");
       system("ps ao pid,comm");
-    ```
-4. Frees allocated memory and closes the device after testing.
-    ```c
+
       free(req.list);
       close(fd);
     }
     ```
+
 ### `test_filter()`
 
-This function tests the filtering of system calls (`read` and `mkdir`):
+This function tests the filtering of system calls (`read` and `mkdir`)
 
-1. **Creates a test file** and writes data to it.
+1. Creates a test file and writes data, then opens the `/dev/rootkit` device and the test file.
+
    ```c
    int fd = open(test_file, O_CREAT | O_WRONLY, 0777);
    write(fd, "hello", 5);
    close(fd);
-   ```
-2. **Opens the `/dev/rootkit` device** and the test file.
-   ```c
+
    fd = open(device, O_RDWR);
    int file_fd = open(test_file, O_RDONLY);
    ```
-3. **Sets up a `filter_info` structure** to filter the `read` and `mkdir` system calls for a specific process (`proc_name`).
+
+2. Sets up a `filter_info` structure to filter the `read` and `mkdir` system calls for a specific process (`proc_name`).
+
    ```c
    struct filter_info info;
    info.syscall_nr = SYS_read;
    strncpy(info.comm, proc_name, TASK_FILTER_LEN);
    ```
-4. **Calls `ioctl` with `IOCTL_ADD_FILTER`** to add the filters for `read` and `mkdir`.
+
+3. Calls `ioctl` with `IOCTL_ADD_FILTER` to add the filters for `read` and `mkdir`. Verifies that the `read` and `mkdir` calls are blocked by the filter.
+
    ```c
    ioctl(fd, IOCTL_ADD_FILTER, &info);
    info.syscall_nr = SYS_mkdirat;
    ioctl(fd, IOCTL_ADD_FILTER, &info);
-   ```
-5. **Verifies that the `read` and `mkdir` calls are blocked** by the filter.
-   ```c
+
    lseek(file_fd, 0, SEEK_SET);
    read(file_fd, buf, 2);  
 
    mkdir(test_dir_name, 0777);
    ```
-6. **Removes the filter using `IOCTL_REMOVE_FILTER`** and verifies that the calls work again.
+
+4. Removes the filter using `IOCTL_REMOVE_FILTER` and verifies that the calls work again.
+
    ```c
    ioctl(fd, IOCTL_REMOVE_FILTER, &info);
    mkdir(test_dir_name, 0777);
    ```
-7. **Tests filtering for a child process** by forking and executing a child program (`/mnt/child`).
+
+5. Tests filtering for another process by forking and executing a child program (`/mnt/child`).
+
    ```c
    strncpy(info.comm, child_proc_name, TASK_FILTER_LEN);
    ioctl(fd, IOCTL_ADD_FILTER, &info);
@@ -347,21 +354,13 @@ This function tests the filtering of system calls (`read` and `mkdir`):
    }
    ```
 
-This test ensures that the rootkit is correctly blocking system calls for specific processes and verifies that removing the filter restores normal functionality.
+### `child.c`
 
-### child process test
->
-> `child.c`
+This code `child.c` is used to simulate the normal user-space program , testing the ability of the `rootkit` kernel module to intercept system calls.
 
-To test our syscall filter, we execute a child process that attempts to perform restricted system calls.
-
-1. **Open and read a file**  
-   - The child process attempts to open and read from a test file (`/home/test.txt`).  
-   - If `read()` is **not filtered**, it should succeed.  
-   - If `read()` is **filtered**, it should fail.  
+1. In this test, we filtered the syscall `mkdir()` but not the syscall `read()` ,so if the syscall `read()` failed it indicate that there was other errors than the rootkit's filtering.
 
    ```c
-    
    int fd = open(filename, O_RDONLY);
    if (fd < 0) {
      perror("open");
@@ -377,10 +376,10 @@ To test our syscall filter, we execute a child process that attempts to perform 
    }
    ```
 
-2. **Attempt to create a directory (`mkdir()`)**  
-   - The parent process **sets up a filter for `mkdir`** before the child process starts.  
-   - The child process tries to create `/home/hello2`.  
-   - If filtering works correctly, `mkdir()` should fail.  
+2. We attempts to create the directory `/home/hello2` using the `mkdir()` system call, setting its permissions to 0777
+
+* If the rookit module has intercepted the mkddir system call. the `mkdir()` will fail successfully with filter.
+- Use unlink() to clean up the testing resources.
 
    ```c
     
@@ -392,15 +391,25 @@ To test our syscall filter, we execute a child process that attempts to perform 
    } else {
      printf("mkdir() failed successfully for child with filter\n");
    }
-   ```
-
-3. **Cleanup: Remove the test file**  
-   - The child process removes `/home/test.txt` to clean up after execution.  
-
-   ```c
    printf("* removing test file at %s\n", filename);
    unlink(filename);
    ```
+
+### `shared_rootkit.h`
+
+Since part of the header that `rootkit.c` uses i.e. `rootkit.h` include definitions that are exclusive to kernelspace, we created a separate header for the testbench, most notably the removal of the following definition:
+
+```
+#define PAGE_KERNEL __pgprot(PROT_NORMAL)
+```
+
+An additional definition for `list_head`, are also added to avoid having to include kernel header for the testbench.
+
+```
+struct list_head {
+  struct list_head *next, *prev;
+};
+```
 
 ## Questions
 
@@ -427,5 +436,6 @@ In terms of advantages / Disadvantages:
 [Modifying System Call Arguments with ptrace](https://www.alfonsobeato.net/c/modifying-system-call-arguments-with-ptrace/)[
 strace原理、ptrace PTRACE_SYSCALL 调用跟踪
 ](https://blog.csdn.net/weixin_42544902/article/details/135449029)[How does ptrace work in Linux?](https://stackoverflow.com/questions/23928530/how-does-ptrace-work-in-linux)
+[seccomp internals](https://www.armosec.io/blog/seccomp-internals-part-1/)
 
 
