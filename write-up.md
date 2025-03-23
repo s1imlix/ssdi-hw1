@@ -5,11 +5,11 @@ Our source code consists of the following file:
 template/
 ├── child.c
 ├── Makefile
-├── write-up.md
 ├── rootkit.c
 ├── rootkit.h
 ├── shared_rootkit.h
-└── test.c
+├── test.c
+└── write-up.md
 ```
 
 We will separately explain different part of the source code, including:
@@ -349,9 +349,62 @@ This function tests the filtering of system calls (`read` and `mkdir`):
 
 This test ensures that the rootkit is correctly blocking system calls for specific processes and verifies that removing the filter restores normal functionality.
 
-## Questions
-1. ROP
+### child process test
+>
+> `child.c`
 
+To test our syscall filter, we execute a child process that attempts to perform restricted system calls.
+
+1. **Open and read a file**  
+   - The child process attempts to open and read from a test file (`/home/test.txt`).  
+   - If `read()` is **not filtered**, it should succeed.  
+   - If `read()` is **filtered**, it should fail.  
+
+   ```c
+    
+   int fd = open(filename, O_RDONLY);
+   if (fd < 0) {
+     perror("open");
+     return 1;
+   }
+
+   char buf[2];
+   int n = read(fd, buf, 2);
+   if (n < 0) {
+     perror("child read() failed despite not having filter");
+   } else {
+     printf("child read() succeeded with %d bytes\n", n);
+   }
+   ```
+
+2. **Attempt to create a directory (`mkdir()`)**  
+   - The parent process **sets up a filter for `mkdir`** before the child process starts.  
+   - The child process tries to create `/home/hello2`.  
+   - If filtering works correctly, `mkdir()` should fail.  
+
+   ```c
+    
+   printf("* child calling mkdir() with filter set by parent\n");
+   if (mkdir(test_dir_name, 0777) == 0) {
+     printf("mkdir() succeeded for child, removing newly created dir %s\n",
+            test_dir_name);
+     rmdir(test_dir_name);
+   } else {
+     printf("mkdir() failed successfully for child with filter\n");
+   }
+   ```
+
+3. **Cleanup: Remove the test file**  
+   - The child process removes `/home/test.txt` to clean up after execution.  
+
+   ```c
+   printf("* removing test file at %s\n", filename);
+   unlink(filename);
+   ```
+
+## Questions
+
+1. ROP
 
 2. Comparing with `ptrace` approach
 
@@ -359,19 +412,20 @@ A typical approach of filtering using `ptrace` involves using `PTRACE_SYSCALL` t
 
 `ptrace` works by setting a flag on tracee's `task_struct` which is then checked by architecture-specific system call entry to determine whether to call [`ptrace_report_syscall`](https://elixir.bootlin.com/linux/v6.1/source/include/linux/ptrace.h#L412) and notify the tracer.
 
-
 The filtering is usually done after first notification where the tracer can verify the system call number using `PTRACE_PEEKUSER` and perform the filtering, which is usually done by `PTRACE_POKEUSER` to modify the return value or invalidates the call by changing arguments.
 
-In terms of advantages:
+In terms of advantages / Disadvantages:
+
 - `ptrace` approach allows filtering with PID, which allows more fine-grained filter compared to our process name (`task_struct->comm`) approach.
 - `ptrace` approach allow us to filter without ever modifying `sys_call_table`, as it still follows the same control flow as a normal system call would go.
+- Our approach is simpler to use as it doesn't require the initial setup of `ptrace` on tracer/tracee, `wait()` on the tracer, and manually modification of the tracee's memory to intervene with the call.
+- Our approach probably has less overhead as well. We see `ptrace` actually involves frequent context switches between the tracee's kernel space and the tracer's user space, while our module performs both the checking and filtering within kernel space.
+
 ## References
 [ptrace(2)](https://man7.org/linux/man-pages/man2/ptrace.2.html)
 [Linux ARM64 hook系统调用原创](https://blog.csdn.net/weixin_45030965/article/details/129203081)
-[Modifying System Call Arguments with ptrace](https://www.alfonsobeato.net/c/modifying-system-call-arguments-with-ptrace/)
-[
+[Modifying System Call Arguments with ptrace](https://www.alfonsobeato.net/c/modifying-system-call-arguments-with-ptrace/)[
 strace原理、ptrace PTRACE_SYSCALL 调用跟踪
-](https://blog.csdn.net/weixin_42544902/article/details/135449029)
-[How does ptrace work in Linux?](https://stackoverflow.com/questions/23928530/how-does-ptrace-work-in-linux)
+](https://blog.csdn.net/weixin_42544902/article/details/135449029)[How does ptrace work in Linux?](https://stackoverflow.com/questions/23928530/how-does-ptrace-work-in-linux)
 
 
